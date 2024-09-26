@@ -2,44 +2,25 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ibi_post_config
+  name: ibi-post-config
 
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: ibi_config
-  namespace: ibi_post_config
+  name: ibi-config
+  namespace: ibi-post-config
 
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: ibi_config_crb
+  name: ibi-config-crb
 subjects:
   - kind: ServiceAccount
-    name: ibi_config
-    namespace: ibi_post_config
+    name: ibi-config
+    namespace: ibi-post-config
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: admin
-
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: pi
-spec:
-  completions: 1
-  parallelism: 1
-  template:
-    spec:
-      containers:
-      - name: ibi-post-config
-        image: quay.io/markd/ibi-post-config:latest
-        command: ["perl",  "-Mbignum=bpi", "-wle", "print bpi(2000)"]
-      # change this to OnFailure once debugging is done
-      # restartPolicy: "OnFailure"
-      restartPolicy: Never
-  backoffLimit: 4

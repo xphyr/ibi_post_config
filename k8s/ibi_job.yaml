@@ -1,0 +1,19 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pi
+spec:
+  completions: 1
+  parallelism: 1
+  template:
+    spec:
+      serviceAccountName: ibi-config
+      containers:
+      - name: ibi-post-config
+        image: quay.io/markd/ibi-post-config:latest
+        command: ["perl",  "-Mbignum=bpi", "-wle", "print bpi(2000)"]
+      # change this to OnFailure once debugging is done
+      # restartPolicy: "OnFailure"
+      restartPolicy: Never
+  backoffLimit: 4
