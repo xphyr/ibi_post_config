@@ -5,41 +5,35 @@
   tasks:
   # Ensure Cluster is up and configured before proceeding
   - name: Wait for cluster to be ready.
-    kubernetes.core.k8s_info:
-      definition:
-        apiVersion: config.openshift.io/v1
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
         kind: ClusterVersion
-        metadata:
-          name: version
-      wait: yes
-      wait_condition:
-        type: Available
-        status: True
+        name: version
+        wait: yes
+        wait_condition:
+          type: Available
+          status: True
 
   # Wait until the MCP has the ipsec import certs machine config before proceeding
-  - name: Get Master Machine Config Pool
+  - name: Get Master Machine Config Pool pass
     kubernetes.core.k8s_info:
       api_version: machineconfiguration.openshift.io/v1
       kind: MachineConfigPool
       name: master
     register: mcp_state
-    until: ("99-master-import-certs" in mcp_state)
-    retries: 10
-    delay: 60
+    until: mcp_state.resources | json_query('[*].spec.configuration.source[?name ==`99-master-import-certs`]') | first | length > 0
 
   # We need to ensure that the MCP has been properly applied prior to trying to apply the 
   # NNCP for IPSec
   - name: Wait for Machine Config to be part of MCP
     kubernetes.core.k8s_info:
-      definition:
-        apiVersion: machineconfiguration.openshift.io/v1
-        kind: MachineConfigPool
-        metadata:
-          name: master
+      api_version: machineconfiguration.openshift.io/v1
+      kind: MachineConfigPool
+      name: master
       wait: yes
       wait_condition:
-        type: Updated
-        status: True
+          type: Updated
+          status: True
 
   # src file should come from a secret or configmap
   - name: Apply our NMState Config File for IPSec Creation
@@ -50,11 +44,9 @@
   # Ensure NNCP is configured before proceeding
   - name: Wait for NNCP for IPSec to be ready
     kubernetes.core.k8s_info:
-      definition:
-        apiVersion: nmstate.io/v1
-        kind: NodeNetworkConfigurationPolicy
-        metadata:
-          name: ipsec-config
+      api_version: nmstate.io/v1
+      kind: NodeNetworkConfigurationPolicy
+      name: ipsec-config
       wait: yes
       wait_condition:
         type: Available
