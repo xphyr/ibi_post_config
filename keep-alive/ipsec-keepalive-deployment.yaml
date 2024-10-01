@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipsec-keepalive
+  namespace: ipsec-keepalive
+  labels:
+    app: keepalive
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keepalive
+  template:
+    metadata:
+      labels:
+        app: keepalive
+    spec:
+      serviceAccountName: ipsec-keepalive-sa
+      hostNetwork: true
+      containers:
+      - image: "quay.io/markd/ibi-post-config:latest"
+        command: ["/bin/sh", "-ec", "while :; do curl -k https://api.acm.xphyrlab.net:6443 ; sleep 15 ; done"]
+        name: keepalive
+        imagePullPolicy: Always
+        resources:
+          limits:
+            memory: 500Mi
+            cpu: "1"
+          requests:
+            memory: 256Mi
+            cpu: "0.2"
+        dnsPolicy: ClusterFirstWithHostNet

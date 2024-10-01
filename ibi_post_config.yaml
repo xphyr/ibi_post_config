@@ -5,14 +5,16 @@
   tasks:
   # Ensure Cluster is up and configured before proceeding
   - name: Wait for cluster to be ready.
-      kubernetes.core.k8s_info:
-        api_version: config.openshift.io/v1
-        kind: ClusterVersion
-        name: version
-        wait: yes
-        wait_condition:
-          type: Available
-          status: True
+    kubernetes.core.k8s_info:
+      api_version: config.openshift.io/v1
+      kind: ClusterVersion
+      name: version
+      wait: yes
+      wait_condition:
+        type: Available
+        status: True
+      wait_sleep: 15
+      wait_timeout: 600
 
   # Wait until the MCP has the ipsec import certs machine config before proceeding
   - name: Get Master Machine Config Pool pass
@@ -34,12 +36,21 @@
       wait_condition:
           type: Updated
           status: True
+      wait_sleep: 60
+      wait_timeout: 900
+
+  # Need to apply an nmstate config after we know the cluster has settled
+  # This is due to multiple issues with nmstate and certs and not creating cleanly at IBI install
+  - name: Apply our NMState Opertor Config 
+    kubernetes.core.k8s:
+      state: present
+      src: /ansible/nmstate_config.yaml
 
   # src file should come from a secret or configmap
   - name: Apply our NMState Config File for IPSec Creation
     kubernetes.core.k8s:
       state: present
-      src: /ansible/dynamic/ipsec.yml
+      src: /ansible/dynamic/crd/ipsec-config.yaml
   
   # Ensure NNCP is configured before proceeding
   - name: Wait for NNCP for IPSec to be ready
@@ -52,11 +63,136 @@
         type: Available
         status: True
         reason: SuccessfullyConfigured
+      wait_sleep: 60
+      wait_timeout: 900
+
+  # Patch DNS provider with remote DNS server
+  - name: Patch DNS provider with remote DNS server
+    kubernetes.core.k8s:
+      api_version: operator.openshift.io/v1
+      state: patched
+      kind: DNS
+      name: default
+      definition:
+        spec:
+          servers:
+            - forwardPlugin:
+                policy: Random
+                upstreams:
+                - 172.16.15.6
+                - 172.16.15.7
+              name: xphyrlab-net
+              zones:
+              - acm.xphyrlab.net
+
+  # At this point we have to work around weird routing issues
+  # unless a curl connection is made from the hostNetwork, pods are unable to connect to the remote api server
+  # so, we will create a namespace, service account and pod that curls the api endpoint every 30 seconds to keep the 
+  # host network connected remotely
+  - name: Create a k8s namespace called ipsec-keepalive
+    kubernetes.core.k8s:
+      name: ipsec-keepalive
+      api_version: v1
+      kind: Namespace
+      state: present
+
+  - name: Create ipsec-keepalive-sa service account
+    kubernetes.core.k8s:
+      name: ipsec-keepalive-sa
+      namespace: ipsec-keepalive
+      api_version: v1
+      kind: ServiceAccount
+      state: present 
+
+  # Patch SCC for Hostnet-v2 to add the service account we just created above
+  - name: Add ipsec-keepalive-sa service account to cluster role binding
+    kubernetes.core.k8s:
+      api_version: rbac.authorization.k8s.io/v1
+      state: present
+      kind: ClusterRoleBinding
+      name: ipsec-keepalive-crb
+      definition:
+        subjects:
+          - kind: ServiceAccount
+            name: ipsec-keepalive-sa
+            namespace: ipsec-keepalive
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: 'system:openshift:scc:hostnetwork-v2'
+
+  # Deploy our keepalive pod
+  - name: Deploy keepalive deployment in ipsec-keepalive namespace
+    kubernetes.core.k8s:
+      state: present
+      definition:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ipsec-keepalive
+          namespace: ipsec-keepalive
+          labels:
+            app: keepalive
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: keepalive
+          template:
+            metadata:
+              labels:
+                app: keepalive
+            spec:
+              serviceAccountName: ipsec-keepalive-sa
+              hostNetwork: true
+              containers:
+              - image: "quay.io/markd/ibi-post-config:latest"
+                command: ["/bin/sh", "-ec", "while :; do curl -k https://api.acm.xphyrlab.net:6443 ; sleep 30 ; done"]
+                name: keepalive
+                imagePullPolicy: Always
+                resources:
+                  limits:
+                    memory: 250Mi
+                    cpu: "0.3"
+                  requests:
+                    memory: 100Mi
+                    cpu: "0.1"
+              dnsPolicy: ClusterFirstWithHostNet
 
   # In Theory, we should be able to curl the api endpoint now, we can add a curl check here to be sure it worked
   # DNS is no longer working, so for now lets test with a IP address
   - name: Check that you can connect (GET) to a page and it returns a status 200
     ansible.builtin.uri:
-      url: https://172.16.25.97:6443
+      url: https://172.16.25.92:6443
       validate_certs: false
+      follow_redirects: none
+      method: GET
       status_code: 403
+    register: _result
+    until: _result.status == 403
+    retries: 720 # 720 * 5 seconds = 1hour (60*60/5)
+    delay: 5 # Every 5 seconds
+
+  # Apply the klusterlet CRD
+  - name: Apply the klusterlet CRD
+    kubernetes.core.k8s:
+      state: present
+      src: /ansible/dynamic/crd/klusterlet-crd.yaml
+
+  # Ensure klusterlet CRD is available
+  - name: klusterlet CRD to be ready
+    kubernetes.core.k8s_info:
+      api_version: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: klusterlets.operator.open-cluster-management.io
+      wait: yes
+      wait_condition:
+        type: NamesAccepted
+        status: True
+        reason: NoConflicts
+
+  # Apply the klusterlet CRD
+  - name: Create our klusterlet configuration
+    kubernetes.core.k8s:
+      state: present
+      src: /ansible/dynamic/klusterlet-install.yaml
