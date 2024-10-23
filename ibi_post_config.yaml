@@ -50,7 +50,7 @@
   - name: Apply our NMState Config File for IPSec Creation
     kubernetes.core.k8s:
       state: present
-      src: /ansible/dynamic/crd/ipsec-config.yaml
+      src: /ansible/dynamic/ipsec/ipsec-config.yaml
   
   # Ensure NNCP is configured before proceeding
   - name: Wait for NNCP for IPSec to be ready
@@ -67,6 +67,8 @@
       wait_timeout: 900
 
   # Patch DNS provider with remote DNS server
+  # Note that the zones should be limited to only those that MUST be resolved remotely
+  # not setting this properly will result in all DNS traffic going over the IPSec tunnel
   - name: Patch DNS provider with remote DNS server
     kubernetes.core.k8s:
       api_version: operator.openshift.io/v1
@@ -83,7 +85,7 @@
                 - 172.16.15.7
               name: xphyrlab-net
               zones:
-              - acm.xphyrlab.net
+              - xphyrlab.net
 
   # At this point we have to work around weird routing issues
   # unless a curl connection is made from the hostNetwork, pods are unable to connect to the remote api server
@@ -174,10 +176,10 @@
     delay: 5 # Every 5 seconds
 
   # Apply the klusterlet CRD
-  - name: Apply the klusterlet CRD
+  - name: Apply the klusterlet CRDs
     kubernetes.core.k8s:
       state: present
-      src: /ansible/dynamic/crd/klusterlet-crd.yaml
+      src: /ansible/dynamic/acm/crds.yaml
 
   # Ensure klusterlet CRD is available
   - name: klusterlet CRD to be ready
@@ -195,4 +197,4 @@
   - name: Create our klusterlet configuration
     kubernetes.core.k8s:
       state: present
-      src: /ansible/dynamic/klusterlet-install.yaml
+      src: /ansible/dynamic/acm/import.yaml
