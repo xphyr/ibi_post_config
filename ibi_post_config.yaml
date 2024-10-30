@@ -16,6 +16,24 @@
       wait_sleep: 15
       wait_timeout: 600
 
+  # Retrieve the node name for our SNO cluster
+  - name: Gather data from the nodes
+    kubernetes.core.k8s_info:
+      kind: Node
+    register: node_list
+
+  # We need to label the SNO node as an edge node, so that apps and policies are properly assigned
+  - name: Apply edge.io labels
+    kubernetes.core.k8s:
+      definition:
+        apiVersion: v1
+        kind: Node
+        metadata:
+          name: "{{ item.metadata.name }}"
+          labels:
+            edge.io/isedgedevice: "true"
+    with_items: "{{ node_list.resources }}"
+
   # Wait until the MCP has the ipsec import certs machine config before proceeding
   - name: Get Master Machine Config Pool pass
     kubernetes.core.k8s_info:
